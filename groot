@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+CONF_DIR=~/.config/groot
+
+fetch() {
+	curl -f --retry 5 --retry-all-errors -sL $@
+}
+
+__init_conf() {
+	if ! [ -d $CONF_DIR ]; then
+		mkdir -p $CONF_DIR/{repos,installed,caches}
+		echo "groot https://yonle.github.io/groot/repo" > $CONF_DIR/repositories
+	fi
+}
+
+__help() {
+	echo -e "groot - A small utility to emulate Linux Distribution with proot\n"
+	echo "Usage: groot [command] [arguments]"
+	echo -e "\nAvailable commands:\n"
+	echo "  update    - Update repository"
+	echo "  config    - Manage groot configuration"
+	echo "  list      - List available distribution"
+	echo "  install   - Install a distribution"
+	echo "  remove    - Remove a installed distribution"
+	echo "  clear     - Clear remaining cache"
+	echo "  login     - Login into installed distribution"
+	echo -e "\nFor more information, Please do \"groot [command] --help\"."
+}
+
+__update() {
+	__init_conf
+	
+	while read repo url; do
+		if echo $name | grep -qo "#"; then continue; fi
+		REPO_DIR=$CONF_DIR/repos/$repo
+		rm -rf $REPO_DIR
+		mkdir -p $REPO_DIR
+		mkdir -p $CONF_DIR/installed/$repo
+		echo -n "Fetching $repo repo.... "
+		while read sig file ; do
+			fname=$(basename $file)
+			fetch $url/$file -o $REPO_DIR/$fname
+			if [ "$(sha256sum $REPO_DIR/$fname | awk '{ print $1 }' )" != "$sig" ]; then
+				echo "(Warning) Unmatched checksums for $fname"
+				rm $REPO_DIR/$fname
+			fi
+		done<<<$(fetch $url/GROOT_REPO)
+	
+		if [ $? = 0 ]; then
+			echo "Done"
+		else
+			echo "Fail"
+		fi
+	done<<<$(cat $CONF_DIR/repositories)
+}
+
+__config() {
+	__init_conf
+}
+
+__list_repo() {
+	if ! [ -d $CONF_DIR/repos/$1 ]; then
+		echo "No repo named $1."
+		return;
+	fi
+
+	for plg in $(ls $CONF_DIR/repos/$1/); do
+		dname="$1/${plg%%.sh} ($(sha256sum $CONF_DIR/repos/$1/$plg | awk '{ print $1 }'))"
+		if [ -d $CONF_DIR/installed/$1/${plg%%.sh} ]; then
+			dname+=" (installed)"
+		fi
+		echo $dname
+	done
+}
+
+__list() {
+	if [ $# -ge 1 ]; then
+		__list_repo $1
+	else
+		for repo in $(ls $CONF_DIR/repos/); do
+			__list_repo $repo
+		done
+	fi
+}
+
+__install() {
+	__init_conf
+	if [ $# -ge 1 ]; then
+		distro=$1
+		echo -n "Searching $distro.... "
+		found=""
+		while read i; do
+			found+="$(basename $i) "
+			echo -n "${dname} "
+			read -p "Pick one of these distribution: " rdname
+			if ! [ -f $CONF_DIR/repos/$rdname.sh ]; then
+				echo "But there's no echo $rdname"
+				exit 1
+			fi
+			read -p "Shall you view the script first? (Y/n)" ch
+		done<<<$(find $CONF_DIR/repos -name "*$distro*")
+		echo Done
+	else
+		echo "Usage: groot install [distros, each by space]"
+	fi
+}
+
+__remove() {
+	if [ $# -ge 1 ]; then
+		for distro in $@; do
+			for i in $(find $CONF_DIR/installed -name "$distro"); do
+				echo -n "Removing $distro.... "
+				rm -rf $i
+				echo "Done"
+			done
+			echo "Task succesfully executed."
+		done
+	else
+		echo "Usage: groot remove [distros, each by space]"
+		echo "To remove specific distribution in specific repo,"
+		echo "You can do \"groot remove repo/distro\""
+		echo -e "\nNOTE: If you provide ONLY repo name,\nAll distribution will deleted alongside with it's repo."
+	fi
+}
+
+__clear() {
+	true
+}
+
+__login() {
+	__init_conf
+}
+
+if [ $# -ge 1 ]; then
+	case "$1" in
+		update|u|up) shift 1; __update $@ ;;
+		config|c|cfg) shift 1; __config $@ ;;
+		list|ls) shift 1; __list $@ ;;
+		install|i|in) shift 1; __install $@ ;;
+		remove|r|rm) shift 1; __remove $@ ;;
+		clear|c|cl) __clear ;;
+		login|l) shift 1; __login $@ ;;
+                *) shift 1; __help;;
+        esac
+else
+        __help
+fi
+
+exit 1
